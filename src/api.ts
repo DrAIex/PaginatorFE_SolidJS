@@ -1,11 +1,16 @@
 import { Item, PaginatedResponse, Settings } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-console.log('Using API URL:', API_BASE_URL);
+// console.log('Using API URL:', API_BASE_URL);
 
 const API_URL = `${API_BASE_URL}/api`;
 
-export async function getItems(page: number = 1, limit: number = 20, search: string = ''): Promise<PaginatedResponse> {
+export async function getItems(
+  page: number = 1, 
+  limit: number = 20, 
+  search: string = '',
+  options: { noReorder?: boolean } = {}
+): Promise<PaginatedResponse> {
   const queryParams = new URLSearchParams({
     page: page.toString(),
     limit: limit.toString(),
@@ -13,6 +18,11 @@ export async function getItems(page: number = 1, limit: number = 20, search: str
   
   if (search) {
     queryParams.append('search', search);
+  }
+  
+  if (options.noReorder === true) {
+    queryParams.append('noReorder', 'true');
+    console.log('Добавлен параметр noReorder=true, это может ограничить прокрутку');
   }
   
   const response = await fetch(`${API_URL}/items?${queryParams}`);

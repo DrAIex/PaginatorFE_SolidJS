@@ -21,22 +21,37 @@ const ItemTable = () => {
   const [activeItem, setActiveItem] = createSignal<Item | null>(null);
   const [totalItems, setTotalItems] = createSignal(0);
   const [isScrollLoading, setIsScrollLoading] = createSignal(false);
+  const [disableAutoScroll, setDisableAutoScroll] = createSignal(false);
 
   const fetchItems = async (newPage = 1, append = false) => {
     setLoading(true);
     setError(null);
     try {
-      console.log(`Загружаем элементы: страница ${newPage}, поиск: "${search()}", добавление: ${append}`);
+      // console.log(`Загружаем элементы: страница ${newPage}, поиск: "${search()}", добавление: ${append}`);
+      
       const data = await getItems(newPage, PAGE_SIZE, search());
-      console.log(`Получено ${data.items.length} элементов, всего: ${data.totalItems}`);
+      
+      // console.log(`Получено ${data.items.length} элементов, всего: ${data.totalItems}`);
       
       if (append) {
-        setItems([...items(), ...data.items]);
+        const currentItems = items();
+        const existingIds = new Set(currentItems.map(item => item.id));
+        const newItems = data.items.filter(item => !existingIds.has(item.id));
+        
+        if (newItems.length > 0) {
+          setItems([...currentItems, ...newItems]);
+          // console.log(`Добавлено ${newItems.length} новых элементов, всего элементов: ${currentItems.length + newItems.length}`);
+        } else {
+          console.log('Не найдено новых элементов для добавления');
+        }
       } else {
         setItems(data.items);
       }
-      setPage(data.currentPage);
+      
       setHasMore(data.hasMore);
+      // console.log(`hasMore установлен в ${data.hasMore}, можно продолжать прокрутку: ${data.hasMore ? 'да' : 'нет'}`);
+      
+      setPage(data.currentPage);
       setTotalItems(data.totalItems);
     } catch (e) {
       console.error('Ошибка при загрузке элементов:', e);
@@ -49,15 +64,15 @@ const ItemTable = () => {
 
   const fetchSettings = async () => {
     try {
-      console.log('Загружаем настройки с сервера...');
+      // console.log('Загружаем настройки с сервера...');
       const settings = await getSettings();
-      console.log('Настройки загружены:', settings);
+      // console.log('Настройки загружены:', settings);
       
       if (settings.selectedIds && settings.selectedIds.length > 0) {
         setSelectedIds(new Set(settings.selectedIds));
       }
       
-      console.log('Инициализируем загрузку элементов...');
+      // console.log('Инициализируем загрузку элементов...');
       await fetchItems(1, false);
     } catch (error) {
       console.error('Ошибка при загрузке настроек:', error);
@@ -76,6 +91,8 @@ const ItemTable = () => {
     setSearchTimeout(
       window.setTimeout(() => {
         setPage(1);
+        setIsScrollLoading(false);
+        setDisableAutoScroll(false);
         fetchItems(1, false);
       }, 300)
     );
@@ -84,20 +101,33 @@ const ItemTable = () => {
   const clearSearch = () => {
     setSearch('');
     setPage(1);
+    setIsScrollLoading(false);
+    setDisableAutoScroll(false);
     fetchItems(1, false);
   };
 
   const handleScroll = (e: Event) => {
     const target = e.target as HTMLDivElement;
+    
     if (
-      !loading() &&
-      !isScrollLoading() &&
-      hasMore() &&
-      target.scrollHeight - target.scrollTop <= target.clientHeight + 200
+      loading() || 
+      isScrollLoading() || 
+      !hasMore() || 
+      disableAutoScroll()
     ) {
+      return;
+    }
+    
+    const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+    
+    if (scrollBottom <= 200) {
+      // console.log('Прокрутка близка к концу, загружаем следующую страницу');
       setIsScrollLoading(true);
+      
       const nextPage = page() + 1;
+      // console.log(`Загружаем страницу ${nextPage}`);
       setPage(nextPage);
+      
       fetchItems(nextPage, true);
     }
   };
@@ -137,18 +167,49 @@ const ItemTable = () => {
         const newItems = [...items()];
         const [movedItem] = newItems.splice(fromIndex, 1);
         newItems.splice(toIndex, 0, movedItem);
+        
         setItems(newItems);
         
         try {
-          console.log(`Перемещаем элемент ${fromId} к элементу ${toId}`);
+          // console.log(`Перемещаем элемент ${fromId} к элементу ${toId}`);
+          setDisableAutoScroll(true);
+          
+          const tableWrapper = document.querySelector('.table-wrapper') as HTMLDivElement;
+          const currentScrollTop = tableWrapper?.scrollTop || 0;
+          
+          const currentPageValue = page();
+          const hasMoreValue = hasMore();
+          
           await saveOrder(
             newItems.map(item => item.id),
             { fromId, toId }
           );
-          console.log('Порядок сохранен, перезагружаем текущую страницу');
-          fetchItems(page(), false);
+          // console.log('Порядок сохранен');
+          
+          try {
+            // console.log(`Обновляем данные о текущей странице ${currentPageValue} без noReorder`);
+            const data = await getItems(currentPageValue, PAGE_SIZE, search());
+            
+            setHasMore(data.hasMore || hasMoreValue);
+            // console.log(`hasMore установлен в ${data.hasMore || hasMoreValue}, можно продолжать прокрутку`);
+            
+            setTotalItems(data.totalItems);
+          } catch (e) {
+            console.error('Ошибка при обновлении метаданных:', e);
+            setHasMore(hasMoreValue);
+          }
+          
+          if (tableWrapper) {
+            tableWrapper.scrollTop = currentScrollTop;
+          }
+          
+          setTimeout(() => {
+            setDisableAutoScroll(false);
+            // console.log('Автоматическая загрузка при скролле снова включена');
+          }, 300);
         } catch (error) {
           console.error('Ошибка при сохранении порядка:', error);
+          setDisableAutoScroll(false);
         }
       }
     }
@@ -156,7 +217,7 @@ const ItemTable = () => {
   };
 
   onMount(() => {
-    console.log('Компонент ItemTable инициализирован');
+    // console.log('Компонент ItemTable инициализирован');
     setSearch('');
     setPage(1);
     fetchSettings()
@@ -172,6 +233,7 @@ const ItemTable = () => {
       <tr
         ref={sortable.ref}
         class="table-row"
+        data-id={props.item.id}
         classList={{
           'selected': props.item.selected,
           'dragging': sortable.isActiveDraggable
